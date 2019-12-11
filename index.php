@@ -12,7 +12,9 @@
 
 <div style="background: #999999;text-align: center;height: 100%;">
     <h2 style="text-align: center">online chat</h2>
-    测试账号admin ,user1 ,user2
+    <h3  style="text-align: center">  测试账号admin ,user1 ,user2</h3>
+
+
 
 <form action="" method="post" style="display: inline-block;overflow:auto;margin-top: 180px;" name="form">
 输入用户名<input type="text" name="name" value="" style="height: 25px" id="name">
@@ -31,7 +33,7 @@
         }
     }
     if(/Android|webOS|iPhone|iPod|BlackBerry/i.test(navigator.userAgent)) {
-        document.form.action='chat.php';
+        document.form.action='chat_pc.php';
     } else {
         document.form.action='chat_pc.php';
     }
