@@ -32,7 +32,36 @@ if(!$user){
                 </div>
                 <div class="online_friend">
                     <ul id="user_list">
+                        <?php
+                        $servername = "39.108.49.102";
+                        $username = "root";
+                        $password = "123456";
+                        $dbname = "webdb";
 
+                        // 创建连接
+                        $conn = new PDO("mysql:host=$servername;dbname=$dbname", $username, $password);
+                        $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+                        $stmt = $conn->query("select * from user");
+
+                        $i = 0;
+                        while ($row = $stmt->fetch())
+                        {
+                            $users[$i]['name'] = $row['user_name'];
+                            $users[$i]['id'] = $row['id'];
+                            $i++;
+                        }
+
+                        $html='';
+                        if(!empty($users)){
+                            foreach ($users as $key=>$value){
+                                if($value['name']!=$user){
+                                    $html.= "<li class='abc'> <div class='a_friend'><div class=''><div class='head_text'>".$value['name']."</div></div><input  type='hidden' "."value=".$value['id'].">";
+                                    $html.= "</li>";
+                                }
+                            }
+                        }
+                        echo $html;
+                        ?>
                     </ul>
                 </div>
 
@@ -64,7 +93,7 @@ if(!$user){
 </body>
 <script src="./static/js/jquery-1.8.2.min.js"></script>
 <script>
-    var wsServer = 'ws://39.108.49.102:9501';
+    var wsServer = 'ws://39.108.49.102:9501/chat';
     var websocket = new WebSocket(wsServer);
 
     websocket.onopen = function (evt) {
@@ -85,12 +114,12 @@ if(!$user){
         //发送者id
         // console.log(data);
         if(data.users){
-            var users = data.users,html='';
-            for(var i=0;i<users.length;i++){
-                html+= "<li class='abc'> <div class='a_friend'><div class=''><div class='head_text'>"+users[i].name+"</div></div>"+
-                        "<input  type='hidden' value="+users[i].id+"></div></li>"
-            }
-            $('#user_list').html(html);
+            // var users = data.users,html='';
+            // for(var i=0;i<users.length;i++){
+            //     html+= "<li class='abc'> <div class='a_friend'><div class=''><div class='head_text'>"+users[i].name+"</div></div>"+
+            //             "<input  type='hidden' value="+users[i].id+"></div></li>"
+            // }
+            // $('#user_list').html(html);
         }
         if(id){
             $("#sender_id").val(id)
@@ -132,6 +161,7 @@ if(!$user){
         var massage=document.getElementById('send_txt').value;
         if(massage){
             var msg = '{"type":"2","msg":"'+massage+'","from_user":"<?php echo $user;?>","to_user":"'+receiver_id+'","from_user_id":"'+sender_id+'"}';
+
             websocket.send(msg);
             $('#send_txt').val('');
         }else{

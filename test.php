@@ -51,3 +51,25 @@ function send_to($user_id){
 function offline_msg_send($user_id){
 
 }
+
+
+$server = new Swoole\WebSocket\Server("0.0.0.0", 9501);
+$server->set(array(
+    'heartbeat_idle_time' => 9, // 一个连接如果9秒内未向服务器发送任何数据，此连接将被强制关闭
+    'heartbeat_check_interval' => 5, // 每5秒遍历一次
+));
+
+$server->on('open', function (Swoole\WebSocket\Server $server, $request) {
+    echo "server: handshake success with fd{$request->fd}\n";
+});
+
+$server->on('message', function (Swoole\WebSocket\Server $server, $frame) {
+    echo "receive from {$frame->fd}:{$frame->data},opcode:{$frame->opcode},fin:{$frame->finish}\n";
+    $server->push($frame->fd, "this is server");
+});
+
+$server->on('close', function ($ser, $fd) {
+    echo "client {$fd} closed\n";
+});
+
+$server->start();

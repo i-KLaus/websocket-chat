@@ -10,17 +10,18 @@
 
 use Swoole\Coroutine\Redis;
 
-$mgr_cli = new swoole_client( SWOOLE_SOCK_TCP );
-    $isNotWorking = @!$mgr_cli->connect( '39.108.49.102', 9501, 0.1 );
-    if($isNotWorking){
+//$mgr_cli = new swoole_client( SWOOLE_SOCK_TCP );
+//    $isNotWorking = @!$mgr_cli->connect( '39.108.49.102', 9501, 0.1 );
+    if(1){
         $ws = new swoole_websocket_server("0.0.0.0", 9501);
         $redis = new \Redis();
         $redis->connect('39.108.49.102', 6379);
         $redis->auth('abc123');
 
         $ws->set(array(
-//        'daemonize' => true,
+//        'daemonize' => true,'
             'worker_num'      => 1,
+
         ));
 
         $ws->on('open', function ($ws, $request) use($redis) {
@@ -39,35 +40,34 @@ $mgr_cli = new swoole_client( SWOOLE_SOCK_TCP );
                 $redis->connect('39.108.49.102', 6379);
                 $redis->auth('abc123');
 
+
                 $data = json_decode($frame->data,true);
-                if($data['type'] ==1 ){
-                    $id = is_login($frame,$server_info['remote_ip']);//发送者id
+                if($data['type'] ==1 ){//上线
+                    $id = is_login($frame,$server_info['remote_ip']);//当前客户端用户的id
                     $redis->sAdd('users',$data['user']);//添加到users集合中
+                    //离线消息推送
+                    $offline = $redis->get($id.'_offline_msg');
+                    if($offline) {
+                        offline_msg_send($id,$redis,$frame,$ws,$data['user']);
+                    }
+                    friedns_list($redis,$ws,$frame,$data);
+                    $ws->push($frame->fd,json_encode(['id'=>$id]));
 
-//                    $redis_data = $redis->get($data['user']);
-//                    $fd_on = json_decode($redis_data,true)['fd'];
-//
-//                    $users = json_decode($redis_data,true)['name'];
-                      friedns_list($redis,$ws,$frame,$data);
-                      $ws->push($frame->fd,json_encode(['id'=>$id]));
-
-//                    $message = msg_generate($data['type'],$frame,$data,$fd_on);
-//                    $push_data = ['message'=>$message,'users'=>$users];
-//                    $ws->push($fd_on,json_encode($push_data));
-
-                }else if($data['type'] ==2){
+                }else if($data['type'] ==2){//发送消息
                     if($data['to_user'] == 'all'){//to_user即用户id
-                        foreach ($fds as $fd){//改成推送成指定的fd即可
+//                        foreach ($fds as $fd){//改成推送成指定的fd即可
+//                            $message = msg_generate($data['type'],$frame,$data,$fd);
+//                            $push_data = ['message'=>$message];
+//                            $ws->push($fd,json_encode($push_data));
+//                        }
+                    }else{
+                        //信息接收方
+                        $fd = send_to($data['to_user'],$data['msg'],$data['from_user_id'],$redis);
+                        if($fd != 'offline'){
                             $message = msg_generate($data['type'],$frame,$data,$fd);
                             $push_data = ['message'=>$message];
                             $ws->push($fd,json_encode($push_data));
                         }
-                    }else{
-                        //信息接收方
-                        $fd = send_to($data['to_user'],$data['msg'],$data['from_user_id']);
-                        $message = msg_generate($data['type'],$frame,$data,$fd);
-                        $push_data = ['message'=>$message];
-                        $ws->push($fd,json_encode($push_data));
                         //self接收方
                         $message = msg_generate($data['type'],$frame,$data,$frame->fd);
                         $push_data = ['message'=>$message];
@@ -80,27 +80,12 @@ $mgr_cli = new swoole_client( SWOOLE_SOCK_TCP );
 
         //监听WebSocket连接关闭事件
         //关闭时删除db中的fd字段
-        $ws->on('close', function ($ws, $fd) use ($redis){
-            $redis->sRem('fd',$fd);
-            $fds = $redis->sMembers('fd');
-            $i=0;$users=[];
-            foreach ($fds as $fd_on){
-                $info = $redis->get($fd_on);
-                $is_time = $redis->ttl($fd_on);
-                if($is_time){
-                    $users[$i]['fd']   = $fd_on;
-                    $users[$i]['name'] = json_decode($info,true)['user'];
-                }else{
-                    $redis->sRem('fd',$fd_on);
-                }
-                $i++;
-            }
-            foreach ($fds as $fd_on){
-                $user = json_decode($redis->get($fd),true)['user'];
-                $message = date('Y-m-d H:i:s',time())."<br><b style='color: blueviolet'>".$user."</b> 已下线<br>";
-                $push_data = ['message'=>$message,'users'=>$users];
-                $ws->push($fd_on,json_encode($push_data));
-            }
+        $ws->on('close', function ($ws, $fd) {
+
+            go(function () use ($fd) {
+                user_offline_update($fd);
+            });
+
             echo "client-{$fd} is closed\n";
         });
 
@@ -154,7 +139,7 @@ function is_login($frame,$ip){
  * @param $from_user_id 发送方
  * return 接收方的fd
  */
-function send_to($user_id,$msg,$from_user_id){
+function send_to($user_id,$msg,$from_user_id,$redis){
         $db = new Co\MySQL();
         $server = array(
             'host' => '39.108.49.102',
@@ -168,9 +153,15 @@ function send_to($user_id,$msg,$from_user_id){
 
         if(!empty($data)){
             if($data[0]['fd']==-1){
-                //todo
-                //离线消息入库,推送到消息队列mysql,redis
+                $offline_str = $user_id.'_offline_msg';
+                $offline_id = $redis->get($offline_str);
+                if($offline_id){
+                    $redis->incr($offline_str);
+                }else{
+                    $redis->set($offline_str,1);
+                }
                 save_msg($msg,$user_id,$from_user_id,$data[0]['fd'],$db);
+                return 'offline';
             }else{
                 //todo
                 //在线消息入库，发送消息，db,websocket
@@ -212,11 +203,9 @@ function save_msg($msg,$recever_id,$sender_id,$fd,$db){
     if ($stmt == false){
         var_dump($db->errno, $db->error);
     } else {
-        $status = ($fd == -1)?'$fd':1;
+        $status = ($fd == -1)?"$fd":1;
         $stmt->execute([$sender_id, $recever_id,$msg,$status,time()]);
     }
-
-
 }
 
 
@@ -244,6 +233,76 @@ function friedns_list($redis,$ws,$frame,$data){
     foreach ($users as $user){
         $message = msg_generate($data['type'],$frame,$data,$user['fd']);
         $push_data = ['message'=>$message,'users'=>$users];
-        $ws->push($user['fd'],json_encode($push_data));
+        if($data['user']!=$user['name']){
+            $ws->push($user['fd'],json_encode($push_data));
+        }
     }
+}
+
+/**
+ * @param $id
+ * 离线消息接收，消费redis离线消息队列，更改msg中未读消息状态
+ */
+function offline_msg_send($id,$redis,$frame,$ws,$name){
+    $db = new Co\MySQL();
+    $server = array(
+        'host' => '39.108.49.102',
+        'user' => 'root',
+        'password' => '123456',
+        'database' => 'webdb',
+    );
+
+    $db->connect($server);
+    $data = $db->query("select a.user_name,b.* from user a left join msg b on a.id=b.sender_id where b.receiver_id='$id' and status=-1");
+    if(!empty($data)){
+       foreach ($data as $key=>$val){
+           $msg = $val['msg'];
+           $msg_id = $val['id'];
+           $name = $val['user_name'];
+           $time = date('Y-m-d H:i:s', $val['create_time']);
+           //消息已读，更改status
+           $stmt = $db->prepare('update msg set status=? ,update_time=? where id=?');
+           if ($stmt == false){
+               var_dump($db->errno, $db->error);
+           } else {
+               $stmt->execute([1,time(),$msg_id]);
+           }
+           $message = $time . "<br><b style='color: crimson'>" . $name . " 说:</b>  " . $msg . "<br>";
+           $ws->push($frame->fd,json_encode(['message'=>$message]));
+       }
+        $redis->del($name.'_offline_msg');
+    }
+    $db->close();
+}
+
+/**
+ * 用户下线数据更新
+ */
+function user_offline_update($fd){
+    $redis = new Swoole\Coroutine\Redis();
+    $redis->connect('39.108.49.102', 6379);
+    $redis->auth('abc123');
+
+    $db = new Co\MySQL();
+    $server = array(
+        'host' => '39.108.49.102',
+        'user' => 'root',
+        'password' => '123456',
+        'database' => 'webdb',
+    );
+
+    $db->connect($server);
+    $data = $db->query("SELECT * FROM user WHERE fd='$fd'");
+    if(!empty($data)){
+        $user_name = $data[0]['user_name'];
+        $stmt = $db->prepare('update user set fd=? where user_name=?');
+        if ($stmt == false){
+            var_dump($db->errno, $db->error);
+        } else {
+            $stmt->execute([-1,$user_name]);
+            $redis->delete($user_name);
+            $redis->sRem($user_name);
+        }
+    }
+
 }
